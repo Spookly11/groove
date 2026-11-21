@@ -97,6 +97,7 @@ const I = {
   list: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
   minus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>',
   playNext: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M4 12h10M4 18h6M15 15l5 3-5 3z"/></svg>',
+  sync: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>',
   updown: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></svg>',
 };
 
@@ -136,7 +137,9 @@ const DB = {
 const DEFAULT_THEME = { id: 'default-theme', name: 'Default', accent: '#6f1ddb', hasBg: false };
 function emptyLibrary() {
   return { songs: [], playlists: [], themes: [], activeThemeId: 'default-theme', totalListenTime: 0, daily: {},
-    settings: { confirmDelete: true, sortBy: 'added', sortDir: -1 }, desktopSettings: null, state: null };
+    settings: { confirmDelete: true, sortBy: 'added', sortDir: -1 }, desktopSettings: null, state: null,
+    deletedSongs: {}, deletedPlaylists: {}, statsResetAt: 0,
+    sync: { url: '', key: '', lastSync: 0, serverNow: 0, base: null } };
 }
 let L = emptyLibrary();
 const urls = new Map(); // covers key -> object URL
@@ -810,6 +813,12 @@ function drawSettings() {
       '<button class="row" data-act="export"><span class="ic">' + I.exportI + '</span><span class="lbl">Export a backup<small>Same zip format desktop Groove imports</small></span><span class="chev">' + I.chev + '</span></button>' +
       '<button class="row" data-act="confirm-del" role="switch" aria-checked="' + !!L.settings.confirmDelete + '"><span class="ic">' + I.trash + '</span><span class="lbl">Confirm before delete</span><span class="switch' + (L.settings.confirmDelete ? ' on' : '') + '"></span></button>' +
     '</div><div class="note">' + plural(L.songs.length, 'song') + ' · ' + fmtBytes(totalBytes) + ' on this iPhone</div>' +
+    '<div class="section-label">Sync with PC</div><div class="card cloudy">' +
+      (L.sync.url && L.sync.key
+        ? '<button class="row" data-act="sync-now"><span class="ic">' + I.sync + '</span><span class="lbl">Sync now<small id="sync-status">' + esc(syncStatusText()) + '</small></span></button>' +
+          '<button class="row" data-act="sync-setup"><span class="ic">' + I.edit + '</span><span class="lbl">Change PC address or key</span><span class="chev">' + I.chev + '</span></button>'
+        : '<button class="row" data-act="sync-setup"><span class="ic">' + I.sync + '</span><span class="lbl">Set up syncing<small>Keep plays, listening time, songs and playlists the same as desktop Groove</small></span><span class="chev">' + I.chev + '</span></button>') +
+    '</div>' +
     '<div class="section-label">Listening</div><div class="card cloudy">' +
       '<button class="row" data-act="stats"><span class="ic">' + I.stats + '</span><span class="lbl">Statistics</span><span class="val">' + fmtHours(L.totalListenTime) + '</span><span class="chev">' + I.chev + '</span></button>' +
       '<button class="row" data-act="sleep"><span class="ic">' + I.moon + '</span><span class="lbl">Sleep timer</span><span class="val">' + sleepLabel() + '</span><span class="chev">' + I.chev + '</span></button>' +
@@ -842,9 +851,12 @@ $('p-settings').addEventListener('click', async (e) => {
   else if (a === 'stats') { V.stats = true; drawSettings(); $('p-settings').scrollTop = 0; }
   else if (a === 'stats-back') { V.stats = false; drawSettings(); }
   else if (a === 'sleep') sleepSheet();
+  else if (a === 'sync-now') syncNow(true);
+  else if (a === 'sync-setup') syncSetupDialog();
   else if (a === 'reset-stats') {
     if (!(await confirmDlg('Reset listening stats?', 'This clears your listening time, past week and every song\'s play count. It cannot be undone.', 'Reset', true))) return;
     L.totalListenTime = 0; L.daily = {}; L.songs.forEach((s) => { s.playCount = 0; s.skipCount = 0; });
+    L.statsResetAt = Date.now(); if (L.sync.base) L.sync.base = { songs: {}, listen: 0, daily: {} }; // your PC resets too on the next sync
     save(true); drawSettings(); toast('Listening stats reset');
   }
 });
@@ -918,7 +930,7 @@ function songMenu(id, pl, fromNow) {
   if (!fromNow && P.cur && P.cur !== id) opts.push({ icon: I.playNext, label: 'Play next', onClick: () => { P.upcoming = id; ready = { el: null, id: null }; (async () => { const sp = other(); try { await srcFor(sp, id); sp.load(); ready = { el: sp, id }; } catch (e) {} })(); toast('"' + s.title + '" plays next'); } });
   opts.push({ icon: I.addPl, label: 'Add to playlist', onClick: () => addToPlaylistSheet(id) });
   opts.push({ icon: I.edit, label: 'Edit song', onClick: () => songDialog(id) });
-  if (pl) opts.push({ icon: I.minus, label: 'Remove from ' + pl.name, onClick: () => { pl.songIds = pl.songIds.filter((x) => x !== id); save(); drawPlaylists(); } });
+  if (pl) opts.push({ icon: I.minus, label: 'Remove from ' + pl.name, onClick: () => { pl.songIds = pl.songIds.filter((x) => x !== id); pl.updatedAt = Date.now(); save(); drawPlaylists(); } });
   opts.push({ icon: I.trash, label: 'Delete song', danger: true, onClick: () => deleteSong(id) });
   openSheet(s.title, opts);
 }
@@ -926,7 +938,7 @@ function addToPlaylistSheet(id) {
   const s = songById(id); if (!s) return;
   const build = () => {
     const opts = L.playlists.map((pl) => ({ html: covHtml('p:' + pl.id) + '<span>' + esc(pl.name) + '</span>', check: pl.songIds.includes(id), keepOpen: true,
-      onClick: () => { if (pl.songIds.includes(id)) pl.songIds = pl.songIds.filter((x) => x !== id); else pl.songIds.push(id); save(); build(); } }));
+      onClick: () => { if (pl.songIds.includes(id)) pl.songIds = pl.songIds.filter((x) => x !== id); else pl.songIds.push(id); pl.updatedAt = Date.now(); save(); build(); } }));
     opts.push({ icon: I.plus, label: 'New playlist', onClick: () => playlistDialog(null, id) });
     opts.doneLabel = 'Done'; opts.onDone = () => { if (V.tab === 'playlists') drawPlaylists(); };
     openSheet('Add "' + s.title + '" to', opts);
@@ -939,6 +951,7 @@ async function deleteSong(id) {
   if (P.cur === id) { audio.pause(); audio.removeAttribute('src'); P.cur = null; }
   P.queue = P.queue.filter((x) => x !== id);
   L.songs = L.songs.filter((x) => x.id !== id);
+  L.deletedSongs[id] = Date.now(); // deleted on your PC too at the next sync
   L.playlists.forEach((pl) => { pl.songIds = pl.songIds.filter((x) => x !== id); });
   await DB.del('audio', id); await DB.del('covers', 'c:' + id); await DB.del('covers', 'ct:' + id);
   setCover('c:' + id, null); setCover('ct:' + id, null);
@@ -955,11 +968,11 @@ function songDialog(id) {
     if (b.dataset.a === 'cover') { const f = await pickFile('f-image'); if (!f) return; newCover = f; $('d-cov').innerHTML = '<div class="cov has" style="background-image:url(\'' + URL.createObjectURL(f) + '\')"></div>'; return; }
     if (b.dataset.a === 'no') { closeDlg(); return; }
     const title = $('d-title').value.trim() || s.title;
-    s.title = title;
+    if (title !== s.title) { s.title = title; s.updatedAt = Date.now(); }
     if (newCover) {
       try {
         const full = await resizeImage(newCover, 1000, true); const th = await thumbOf(full);
-        await DB.put('covers', 'c:' + id, full); await DB.put('covers', 'ct:' + id, th); setCover('c:' + id, full); setCover('ct:' + id, th); s.hasCover = true;
+        await DB.put('covers', 'c:' + id, full); await DB.put('covers', 'ct:' + id, th); setCover('c:' + id, full); setCover('ct:' + id, th); s.hasCover = true; s.coverRev = Date.now();
         if (artKey === id) artKey = '';
       } catch (err) { toast('That image could not be used'); }
     }
@@ -977,8 +990,8 @@ async function pickAudio() {
       const tags = await readTags(f); const id = uid(); const ext = extOf(f.name, 'mp3');
       const blob = new Blob([f], { type: f.type || AUDIO_TYPES[ext] || 'audio/mpeg' });
       await DB.put('audio', id, blob);
-      const song = { id, title: tags.title || f.name.replace(/\.[^.]+$/, ''), file: id + '.' + ext, playCount: 0, skipCount: 0, addedAt: Date.now() + i, size: f.size, hasCover: false };
-      if (tags.cover) { try { const full = await resizeImage(tags.cover, 1000, true); const th = await thumbOf(full); await DB.put('covers', 'c:' + id, full); await DB.put('covers', 'ct:' + id, th); setCover('c:' + id, full); setCover('ct:' + id, th); song.hasCover = true; } catch (e) {} }
+      const song = { id, title: tags.title || f.name.replace(/\.[^.]+$/, ''), file: id + '.' + ext, playCount: 0, skipCount: 0, addedAt: Date.now() + i, size: f.size, hasCover: false, updatedAt: Date.now(), coverRev: 0 };
+      if (tags.cover) { try { const full = await resizeImage(tags.cover, 1000, true); const th = await thumbOf(full); await DB.put('covers', 'c:' + id, full); await DB.put('covers', 'ct:' + id, th); setCover('c:' + id, full); setCover('ct:' + id, th); song.hasCover = true; song.coverRev = Date.now(); } catch (e) {} }
       L.songs.push(song); added.push(id);
     } catch (e) { toast('Could not add ' + f.name); }
   }
@@ -993,7 +1006,7 @@ async function pickAudio() {
     const opts = L.playlists.map((pl) => ({ html: covHtml('p:' + pl.id) + '<span>' + esc(pl.name) + '</span>', check: chosen.has(pl.id), keepOpen: true,
       onClick: () => { chosen.has(pl.id) ? chosen.delete(pl.id) : chosen.add(pl.id); build(); } }));
     opts.doneLabel = 'Done';
-    opts.onDone = () => { L.playlists.forEach((pl) => { if (chosen.has(pl.id)) added.forEach((id) => { if (!pl.songIds.includes(id)) pl.songIds.push(id); }); }); save(); refreshAll(); toast('Added ' + plural(added.length, 'song')); };
+    opts.onDone = () => { L.playlists.forEach((pl) => { if (chosen.has(pl.id)) { added.forEach((id) => { if (!pl.songIds.includes(id)) pl.songIds.push(id); }); pl.updatedAt = Date.now(); } }); save(); refreshAll(); toast('Added ' + plural(added.length, 'song')); };
     openSheet('Add ' + plural(added.length, 'new song') + ' to playlists', opts);
   };
   build();
@@ -1006,7 +1019,7 @@ function playlistMenu(pl) {
     { icon: I.updown, label: 'Reorder songs', onClick: () => reorderSheet(pl) },
     { icon: I.trash, label: 'Delete playlist', danger: true, onClick: async () => {
       if (L.settings.confirmDelete && !(await confirmDlg('Delete "' + pl.name + '"?', 'The playlist is removed. Its songs stay in your Library.', 'Delete', true))) return;
-      L.playlists = L.playlists.filter((x) => x.id !== pl.id); await DB.del('covers', 'p:' + pl.id); setCover('p:' + pl.id, null);
+      L.playlists = L.playlists.filter((x) => x.id !== pl.id); L.deletedPlaylists[pl.id] = Date.now(); await DB.del('covers', 'p:' + pl.id); setCover('p:' + pl.id, null);
       V.plId = null; save(); drawPlaylists(); toast('Playlist deleted');
     } },
   ]);
@@ -1015,7 +1028,7 @@ function reorderSheet(pl) {
   let sel = null;
   const build = () => {
     const opts = pl.songIds.map((id, i) => { const s = songById(id); return s ? { html: '<span class="num" style="width:22px">' + (i + 1) + '</span>' + covHtml('ct:' + id) + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' + (sel === i ? ';color:var(--accent);font-weight:600' : '') + '">' + esc(s.title) + '</span>', keepOpen: true,
-      onClick: () => { if (sel == null) sel = i; else { const [m] = pl.songIds.splice(sel, 1); pl.songIds.splice(i, 0, m); sel = null; save(); } build(); } } : null; }).filter(Boolean);
+      onClick: () => { if (sel == null) sel = i; else { const [m] = pl.songIds.splice(sel, 1); pl.songIds.splice(i, 0, m); sel = null; pl.updatedAt = Date.now(); save(); } build(); } } : null; }).filter(Boolean);
     opts.doneLabel = 'Done'; opts.onDone = () => drawPlaylists();
     openSheet(sel == null ? 'Tap a song, then tap where it should go' : 'Now tap where it should go', opts);
   };
@@ -1034,8 +1047,8 @@ function playlistDialog(pl, addSongId) {
     const name = $('d-name').value.trim(); if (!name) { $('d-name').focus(); return; }
     let p = pl;
     if (!p) { p = { id: 'pl_' + uid(), name, songIds: addSongId ? [addSongId] : [], hasCover: false }; L.playlists.push(p); }
-    p.name = name;
-    if (newCover) { try { const full = await resizeImage(newCover, 1000, true); await DB.put('covers', 'p:' + p.id, full); setCover('p:' + p.id, full); p.hasCover = true; } catch (err) { toast('That image could not be used'); } }
+    p.name = name; p.updatedAt = Date.now();
+    if (newCover) { try { const full = await resizeImage(newCover, 1000, true); await DB.put('covers', 'p:' + p.id, full); setCover('p:' + p.id, full); p.hasCover = true; p.coverRev = Date.now(); } catch (err) { toast('That image could not be used'); } }
     save(); closeDlg(); if (V.tab === 'playlists') drawPlaylists(); if (!pl) toast(addSongId ? 'Added to ' + name : 'Playlist created');
   };
 }
@@ -1083,6 +1096,207 @@ function sleepSheet() {
 }
 setInterval(() => { if (sleep.at && V.tab === 'settings' && !V.stats) { const el = document.querySelector('[data-act="sleep"] .val'); if (el) el.textContent = sleepLabel(); } }, 15000);
 
+// ---------- sync with desktop Groove ----------
+// Desktop Groove runs a small private sync server (shared to your devices by Tailscale). Each sync sends
+// what changed here since the last sync (plays, listening time, deletions, edits, new songs) and takes what
+// changed there. Counts and listening time add together; for names, covers and order the newest change wins.
+const SY = { busy: false, status: '', err: '', progress: '' };
+const syncOn = () => !!(L.sync && L.sync.url && L.sync.key);
+function agoText(ms) {
+  if (!ms) return 'never';
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60); if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  return new Date(ms).toLocaleDateString();
+}
+function syncStatusText() {
+  if (SY.busy) return SY.progress || 'Syncing...';
+  if (SY.err) return SY.err;
+  return 'Last synced ' + agoText(L.sync.lastSync);
+}
+function showSyncStatus() { const el = $('sync-status'); if (el) el.textContent = syncStatusText(); }
+function normalizeUrl(u) {
+  u = (u || '').trim().replace(/\/+$/, '');
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  return u;
+}
+async function sreq(path, opts = {}, timeout = 20000) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeout);
+  try {
+    const r = await fetch(L.sync.url + path, Object.assign({}, opts, { headers: Object.assign({ Authorization: 'Bearer ' + L.sync.key }, opts.headers || {}), signal: ctl.signal, cache: 'no-store' }));
+    if (r.status === 401) { const e = new Error('Wrong sync key. Check it in desktop Groove\'s Settings.'); e.key = true; throw e; }
+    return r;
+  } finally { clearTimeout(t); }
+}
+async function storeCover(kind, id, blob) {
+  if (kind === 'song') {
+    const full = await resizeImage(blob, 1000, true); const th = await thumbOf(full);
+    await DB.put('covers', 'c:' + id, full); await DB.put('covers', 'ct:' + id, th); setCover('c:' + id, full); setCover('ct:' + id, th);
+    if (artKey === id) artKey = '';
+  } else { const full = await resizeImage(blob, 1000, true); await DB.put('covers', 'p:' + id, full); setCover('p:' + id, full); }
+}
+async function dropCover(kind, id) {
+  if (kind === 'song') { await DB.del('covers', 'c:' + id); await DB.del('covers', 'ct:' + id); setCover('c:' + id, null); setCover('ct:' + id, null); }
+  else { await DB.del('covers', 'p:' + id); setCover('p:' + id, null); }
+}
+async function removeLocalSong(id) {
+  if (!songById(id)) return;
+  if (P.cur === id) { audio.pause(); audio.removeAttribute('src'); P.cur = null; }
+  P.queue = P.queue.filter((x) => x !== id);
+  L.songs = L.songs.filter((x) => x.id !== id);
+  L.playlists.forEach((pl) => { pl.songIds = pl.songIds.filter((x) => x !== id); });
+  await DB.del('audio', id); await dropCover('song', id);
+}
+async function syncNow(manual) {
+  if (!syncOn() || SY.busy) return;
+  SY.busy = true; SY.err = ''; SY.progress = 'Syncing...'; showSyncStatus();
+  try {
+    const base = L.sync.base;
+    const sent = { songs: {}, listen: L.totalListenTime || 0, daily: Object.assign({}, L.daily) };
+    const dailyDelta = {};
+    if (base) for (const [d, ms] of Object.entries(L.daily)) { const x = ms - ((base.daily || {})[d] || 0); if (x > 0) dailyDelta[d] = x; }
+    const body = {
+      lastSync: L.sync.serverNow || 0, statsResetAt: L.statsResetAt || 0,
+      deletedSongs: L.deletedSongs, deletedPlaylists: L.deletedPlaylists,
+      songs: L.songs.map((s) => {
+        sent.songs[s.id] = [s.playCount || 0, s.skipCount || 0];
+        const b = base && base.songs[s.id];
+        return { id: s.id, title: s.title, file: s.file, addedAt: s.addedAt == null ? null : s.addedAt, updatedAt: s.updatedAt || 0, coverRev: s.coverRev || 0, hasCover: !!s.hasCover,
+          dPlay: b ? Math.max(0, (s.playCount || 0) - b[0]) : 0, dSkip: b ? Math.max(0, (s.skipCount || 0) - b[1]) : 0 };
+      }),
+      playlists: L.playlists.map((p) => ({ id: p.id, name: p.name, songIds: p.songIds, updatedAt: p.updatedAt || 0, coverRev: p.coverRev || 0, hasCover: !!p.hasCover })),
+      listenDelta: base ? Math.max(0, (L.totalListenTime || 0) - (base.listen || 0)) : 0,
+      dailyDelta,
+    };
+    const r = await sreq('/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('Your PC answered with an error (' + r.status + ').');
+    const res = await r.json(); const st = res.state;
+
+    // deletions made on the PC
+    for (const [id, ts] of Object.entries(st.deletedSongs || {})) { if (!L.deletedSongs[id]) L.deletedSongs[id] = ts; await removeLocalSong(id); }
+    for (const [id, ts] of Object.entries(st.deletedPlaylists || {})) {
+      if (!L.deletedPlaylists[id]) L.deletedPlaylists[id] = ts;
+      if (plById(id)) { L.playlists = L.playlists.filter((p) => p.id !== id); await dropCover('playlist', id); if (V.plId === id) V.plId = null; }
+    }
+    if ((st.statsResetAt || 0) > (L.statsResetAt || 0)) L.statsResetAt = st.statsResetAt;
+    // songs: counts come back with this phone's plays already added; plays made during the sync are kept on top
+    const getAudio = [], getCovers = [];
+    for (const s of st.songs) {
+      const loc = songById(s.id);
+      if (!loc) { if (!L.deletedSongs[s.id]) getAudio.push(s); continue; }
+      const was = sent.songs[s.id] || [loc.playCount || 0, loc.skipCount || 0];
+      loc.playCount = s.playCount + Math.max(0, (loc.playCount || 0) - was[0]);
+      loc.skipCount = s.skipCount + Math.max(0, (loc.skipCount || 0) - was[1]);
+      if ((s.updatedAt || 0) > (loc.updatedAt || 0)) { loc.title = s.title; if (s.addedAt != null) loc.addedAt = s.addedAt; loc.updatedAt = s.updatedAt; }
+      if ((s.coverRev || 0) > (loc.coverRev || 0)) {
+        if (s.hasCover) getCovers.push(['song', s.id, s.coverRev]);
+        else { await dropCover('song', s.id); loc.hasCover = false; loc.coverRev = s.coverRev; }
+      }
+    }
+    L.totalListenTime = (st.totalListenTime || 0) + Math.max(0, (L.totalListenTime || 0) - sent.listen);
+    const daily = Object.assign({}, st.daily || {});
+    for (const [d, ms] of Object.entries(L.daily)) { const x = ms - (sent.daily[d] || 0); if (x > 0) daily[d] = (daily[d] || 0) + x; }
+    L.daily = daily;
+    // playlists
+    for (const p of st.playlists) {
+      let loc = plById(p.id);
+      if (!loc) {
+        if (L.deletedPlaylists[p.id]) continue;
+        loc = { id: p.id, name: p.name, songIds: [], updatedAt: 0, coverRev: 0, hasCover: false }; L.playlists.push(loc);
+      }
+      if ((p.updatedAt || 0) > (loc.updatedAt || 0)) { loc.name = p.name; loc.songIds = p.songIds.slice(); loc.updatedAt = p.updatedAt; }
+      if ((p.coverRev || 0) > (loc.coverRev || 0)) {
+        if (p.hasCover) getCovers.push(['playlist', p.id, p.coverRev]);
+        else { await dropCover('playlist', p.id); loc.hasCover = false; loc.coverRev = p.coverRev; }
+      }
+    }
+    // everything is now counted on both sides: start the next round from here
+    L.sync.base = { songs: Object.fromEntries(st.songs.map((s) => [s.id, [s.playCount, s.skipCount]])), listen: st.totalListenTime || 0, daily: Object.assign({}, st.daily || {}) };
+    L.sync.serverNow = res.now || Date.now();
+    await save(true); refreshAll();
+
+    // send the PC songs and covers only this phone has
+    let n = 0; const up = res.needAudio || [];
+    for (const id of up) {
+      const s = songById(id); if (!s) continue;
+      SY.progress = 'Sending songs to your PC (' + (++n) + ' of ' + up.length + ')'; showSyncStatus();
+      const blob = await DB.get('audio', id); if (!blob) continue;
+      const meta = { title: s.title, file: s.file, addedAt: s.addedAt, updatedAt: s.updatedAt || 0, playCount: s.playCount || 0, skipCount: s.skipCount || 0,
+        playlistIds: L.playlists.filter((p) => p.songIds.includes(id)).map((p) => p.id) };
+      const pr = await sreq('/audio/' + encodeURIComponent(id), { method: 'PUT', headers: { 'X-Meta': encodeURIComponent(JSON.stringify(meta)), 'Content-Type': 'application/octet-stream' }, body: blob }, 120000);
+      if (!pr.ok) continue;
+      L.sync.base.songs[id] = [s.playCount || 0, s.skipCount || 0];
+      if (s.hasCover) { const c = await DB.get('covers', 'c:' + id); if (c) await sreq('/cover/song/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': c.type || 'image/jpeg', 'X-Meta': String(s.coverRev || Date.now()) }, body: c }, 60000); }
+    }
+    for (const id of res.needSongCover || []) { const s = songById(id); const c = s && await DB.get('covers', 'c:' + id); if (c) await sreq('/cover/song/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': c.type || 'image/jpeg', 'X-Meta': String(s.coverRev || Date.now()) }, body: c }, 60000); }
+    for (const id of res.needPlaylistCover || []) { const p = plById(id); const c = p && await DB.get('covers', 'p:' + id); if (c) await sreq('/cover/playlist/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': c.type || 'image/jpeg', 'X-Meta': String(p.coverRev || Date.now()) }, body: c }, 60000); }
+
+    // bring over songs only the PC has
+    n = 0;
+    for (const s of getAudio) {
+      SY.progress = 'Getting new songs (' + (++n) + ' of ' + getAudio.length + ')'; showSyncStatus();
+      const ar = await sreq('/audio/' + encodeURIComponent(s.id), {}, 180000); if (!ar.ok) continue;
+      const blob = await ar.blob();
+      await DB.put('audio', s.id, new Blob([blob], { type: ar.headers.get('Content-Type') || AUDIO_TYPES[extOf(s.file, 'mp3')] || 'audio/mpeg' }));
+      L.songs.push({ id: s.id, title: s.title, file: s.file, addedAt: s.addedAt == null ? Date.now() : s.addedAt, updatedAt: s.updatedAt || 0, coverRev: 0, hasCover: false,
+        playCount: s.playCount || 0, skipCount: s.skipCount || 0, size: blob.size });
+      if (s.hasCover) getCovers.push(['song', s.id, s.coverRev]);
+      if (n % 5 === 0) { await save(true); refreshAll(); }
+    }
+    for (const [kind, id, rev] of getCovers) {
+      const item = kind === 'song' ? songById(id) : plById(id); if (!item) continue;
+      try {
+        const cr = await sreq('/cover/' + kind + '/' + encodeURIComponent(id), {}, 60000); if (!cr.ok) continue;
+        await storeCover(kind, id, await cr.blob()); item.hasCover = true; item.coverRev = rev;
+      } catch (e) { /* try again next sync */ }
+    }
+    L.sync.lastSync = Date.now();
+    await save(true); refreshAll();
+    if (getAudio.length && !manual) toast('Synced ' + plural(getAudio.length, 'new song') + ' from your PC');
+    if (manual) toast('Synced with your PC');
+    if (up.length || getAudio.length) requestPersist();
+  } catch (e) {
+    SY.err = e && e.key ? e.message : 'Couldn\'t reach your PC. Is Groove open on it and Tailscale on here?';
+    if (manual) toast(SY.err);
+  } finally {
+    SY.busy = false; SY.progress = ''; showSyncStatus();
+    if (V.tab === 'settings' && !V.stats) drawSettings();
+  }
+}
+function syncSetupDialog() {
+  openDlg('<h2>Sync with PC</h2><p>Turn on Phone sync in desktop Groove\'s Settings, then enter your PC\'s Tailscale address and the sync key shown there.</p>' +
+    '<div class="field"><label for="d-url">PC address</label><input type="text" id="d-url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="yourpc.tailnet-name.ts.net" value="' + esc((L.sync.url || '').replace(/^https:\/\//, '')) + '"></div>' +
+    '<div class="field"><label for="d-key">Sync key</label><input type="text" id="d-key" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="ABCD-1234" value="' + esc(L.sync.key || '') + '"></div>' +
+    '<p id="d-msg" style="margin-top:12px;min-height:18px"></p>' +
+    '<div class="acts">' + (syncOn() ? '<button class="btn sec" data-a="off">Turn off</button>' : '<button class="btn sec" data-a="no">Cancel</button>') + '<button class="btn accent" data-a="go">Connect</button></div>');
+  $('dlg').onclick = async (e) => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    if (b.dataset.a === 'no') { closeDlg(); return; }
+    if (b.dataset.a === 'off') { L.sync.url = ''; L.sync.key = ''; save(); closeDlg(); drawSettings(); toast('Syncing turned off'); return; }
+    const url = normalizeUrl($('d-url').value), key = $('d-key').value.trim().toUpperCase();
+    if (!url || !key) { $('d-msg').textContent = 'Enter both the address and the key.'; return; }
+    $('d-msg').textContent = 'Connecting...';
+    try {
+      const ctl = new AbortController(); setTimeout(() => ctl.abort(), 10000);
+      const r = await fetch(url + '/ping', { headers: { Authorization: 'Bearer ' + key }, signal: ctl.signal, cache: 'no-store' });
+      const j = await r.json();
+      if (!j || j.app !== 'Groove') throw new Error('x');
+      if (!j.authed) { $('d-msg').textContent = 'Your PC answered, but the key doesn\'t match. Check it in desktop Groove.'; return; }
+    } catch (err) { $('d-msg').textContent = 'Couldn\'t reach Groove at that address. Check that Tailscale is on, Groove is open on your PC and Phone sync is turned on.'; return; }
+    const changedPc = L.sync.url && L.sync.url !== url;
+    L.sync.url = url; L.sync.key = key;
+    if (changedPc) { L.sync.base = null; L.sync.serverNow = 0; }
+    await save(true); closeDlg(); drawSettings(); syncNow(true);
+  };
+}
+// sync when the app opens, when you come back to it, and every few minutes while it's open
+setTimeout(() => syncNow(false), 2500);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - (L.sync.lastSync || 0) > 60000) syncNow(false); });
+setInterval(() => { if (!document.hidden) syncNow(false); }, 5 * 60000);
+setInterval(() => { if (V.tab === 'settings' && !V.stats) showSyncStatus(); }, 30000);
+
 // ---------- import / export ----------
 async function requestPersist() { try { if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) await navigator.storage.persist(); } catch (e) {} }
 async function startImport() {
@@ -1113,7 +1327,7 @@ async function startImport() {
       const ext = extOf(s.file, 'mp3');
       const blob = await zipRead(file, e, AUDIO_TYPES[ext] || 'audio/mpeg');
       await DB.put('audio', s.id, blob);
-      const song = { id: s.id, title: s.title || s.file, file: s.file, playCount: s.playCount || 0, skipCount: s.skipCount || 0, addedAt: s.addedAt || Date.now(), size: blob.size, hasCover: false };
+      const song = { id: s.id, title: s.title || s.file, file: s.file, playCount: s.playCount || 0, skipCount: s.skipCount || 0, addedAt: s.addedAt || Date.now(), size: blob.size, hasCover: false, updatedAt: s.updatedAt || 0, coverRev: s.coverRev || 0 };
       const ce = s.cover && entries.get('covers/' + s.cover);
       if (ce) {
         try {
@@ -1128,7 +1342,7 @@ async function startImport() {
     pg.set('Playlists and themes...', lib.songs.length / (lib.songs.length + 1));
     const have = new Set(fresh.songs.map((s) => s.id));
     for (const p of lib.playlists || []) {
-      const pl = { id: p.id, name: p.name, songIds: (p.songIds || []).filter((id) => have.has(id)), hasCover: false };
+      const pl = { id: p.id, name: p.name, songIds: (p.songIds || []).filter((id) => have.has(id)), hasCover: false, updatedAt: p.updatedAt || 0, coverRev: p.coverRev || 0 };
       const ce = p.cover && entries.get('covers/' + p.cover);
       if (ce) { try { const full = await resizeImage(await zipRead(file, ce, IMG_TYPES[extOf(p.cover, 'png')]), 1000, true); await DB.put('covers', 'p:' + pl.id, full); setCover('p:' + pl.id, full); pl.hasCover = true; } catch (err) {} }
       fresh.playlists.push(pl);
@@ -1140,6 +1354,9 @@ async function startImport() {
       fresh.themes.push(th);
     }
     fresh.activeThemeId = lib.activeThemeId || DEFAULT_THEME.id;
+    fresh.daily = lib.daily || {}; fresh.deletedSongs = lib.deletedSongs || {}; fresh.deletedPlaylists = lib.deletedPlaylists || {}; fresh.statsResetAt = lib.statsResetAt || 0;
+    // keep the sync setup, and start counting from what was just imported (it matches your PC)
+    fresh.sync = Object.assign({}, L.sync, { serverNow: Date.now(), base: { songs: Object.fromEntries(fresh.songs.map((s) => [s.id, [s.playCount, s.skipCount]])), listen: fresh.totalListenTime, daily: Object.assign({}, fresh.daily) } });
     L = fresh;
     await save(true);
     await requestPersist();
@@ -1157,6 +1374,7 @@ async function exportBackup() {
   const wakeKeeper = keepAwake();
   try {
     const files = []; const lib = { songs: [], playlists: [], totalListenTime: L.totalListenTime || 0, version: 1, themes: [], activeThemeId: L.activeThemeId,
+      daily: L.daily, deletedSongs: L.deletedSongs, deletedPlaylists: L.deletedPlaylists, statsResetAt: L.statsResetAt || 0,
       settings: Object.assign({ minimizeToTray: false, launchOnStartup: false }, L.desktopSettings || {}, { confirmDelete: !!L.settings.confirmDelete }) };
     for (const s of L.songs) {
       const blob = await DB.get('audio', s.id); if (!blob) continue;
@@ -1164,12 +1382,12 @@ async function exportBackup() {
       files.push({ name: 'music/' + file, blob });
       let cover = null;
       if (s.hasCover) { const c = await DB.get('covers', 'c:' + s.id); if (c) { cover = s.id + '_cover.jpg'; files.push({ name: 'covers/' + cover, blob: c }); } }
-      lib.songs.push({ id: s.id, title: s.title, file, cover, playCount: s.playCount || 0, skipCount: s.skipCount || 0, addedAt: s.addedAt });
+      lib.songs.push({ id: s.id, title: s.title, file, cover, playCount: s.playCount || 0, skipCount: s.skipCount || 0, addedAt: s.addedAt, updatedAt: s.updatedAt || 0, coverRev: s.coverRev || 0 });
     }
     for (const p of L.playlists) {
       let cover = null;
       if (p.hasCover) { const c = await DB.get('covers', 'p:' + p.id); if (c) { cover = 'pl_' + p.id + '_cover.jpg'; files.push({ name: 'covers/' + cover, blob: c }); } }
-      lib.playlists.push({ id: p.id, name: p.name, songIds: p.songIds.slice(), cover });
+      lib.playlists.push({ id: p.id, name: p.name, songIds: p.songIds.slice(), cover, updatedAt: p.updatedAt || 0, coverRev: p.coverRev || 0 });
     }
     for (const t of L.themes) {
       let bgImage = null;
