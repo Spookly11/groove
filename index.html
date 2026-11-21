@@ -17,8 +17,6 @@
   --accent: #6f1ddb; --on-accent: #fff; --accent-text: color-mix(in srgb, var(--accent) 78%, white);
   --text: #e8eaf0; --dim: #9ca3af; --dim2: #b4b8c4; --danger: #f87171;
   --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
-  --nav-gap: calc(max(var(--safe-b), 12px) + 10px);
-  --nav-h: calc(64px + var(--nav-gap));
   --mini-h: 62px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
 }
@@ -28,6 +26,9 @@ button { font: inherit; color: inherit; border: 0; background: none; padding: 0;
 input, textarea { font: inherit; color: inherit; -webkit-user-select: text; user-select: text; }
 svg { display: block; flex: none; }
 [hidden] { display: none !important; }
+/* everything lives in #root; if the phone is turned sideways, #root is turned back so Groove stays upright like a portrait-only app */
+#root { position: fixed; inset: 0; overflow: hidden; transform-origin: 0 0; }
+:root, #root { --nav-gap: calc(max(var(--safe-b), 12px) + 10px); --nav-h: calc(64px + var(--nav-gap)); }
 
 /* background: the active theme's picture, darkened */
 #bg { position: fixed; inset: 0; z-index: 0; background: #09090a center/cover no-repeat; }
@@ -105,7 +106,7 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
 .np-from { text-align: center; min-width: 0; flex: 1; padding: 0 8px; }
 .np-from .k { font-size: 11px; color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; }
 .np-from .v { font-size: 14px; font-weight: 600; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.np-cover { margin: 22px auto 0; width: min(100%, calc(100vh - 480px), calc(100dvh - 480px)); min-width: 160px; aspect-ratio: 1; border-radius: 20px; background: rgba(255,255,255,0.08) center/cover no-repeat; box-shadow: 0 24px 60px rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; }
+.np-cover { margin: 22px auto 0; width: min(100%, calc(var(--app-h, 100dvh) - 480px)); min-width: 160px; aspect-ratio: 1; border-radius: 20px; background: rgba(255,255,255,0.08) center/cover no-repeat; box-shadow: 0 24px 60px rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; }
 .np-cover.has svg { display: none; }
 .np-info { margin-top: 26px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .np-title { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -186,7 +187,7 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
 /* sheets, dialogs, toast */
 #scrim { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,0.35); opacity: 0; pointer-events: none; transition: opacity .2s; }
 #scrim.show { opacity: 1; pointer-events: auto; }
-.sheet { position: fixed; z-index: 21; left: 8px; right: 8px; bottom: calc(var(--safe-b) + 8px); border-radius: 26px; padding: 8px; transform: translateY(calc(100% + 80px)); transition: transform .28s cubic-bezier(.2,.8,.2,1); max-height: 80vh; overflow-y: auto;
+.sheet { position: fixed; z-index: 21; left: 8px; right: 8px; bottom: calc(var(--safe-b) + 8px); border-radius: 26px; padding: 8px; transform: translateY(calc(100% + 80px)); transition: transform .28s cubic-bezier(.2,.8,.2,1); max-height: calc(var(--app-h, 100dvh) * 0.8); overflow-y: auto;
   background: color-mix(in srgb, var(--accent) 7%, rgba(20,30,34,0.62)); border: 1px solid rgba(255,255,255,0.18); -webkit-backdrop-filter: blur(26px) saturate(1.3); backdrop-filter: blur(26px) saturate(1.3);
   box-shadow: 0 24px 40px rgba(0,0,0,0.25), inset -5px -4px 40px rgba(0,0,0,0.12); }
 .sheet:not(.show) { visibility: hidden; transition: transform .28s cubic-bezier(.2,.8,.2,1), visibility 0s .28s; }
@@ -225,6 +226,7 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
 </style>
 </head>
 <body class="no-bg">
+<div id="root">
 <div id="bg"></div>
 <div id="app">
   <section class="page" id="p-now" hidden></section>
@@ -256,6 +258,7 @@ h1 { margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
 <input type="file" id="f-zip" accept=".zip,application/zip,application/x-zip-compressed" hidden>
 <audio id="a1" preload="auto"></audio>
 <audio id="a2" preload="auto"></audio>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

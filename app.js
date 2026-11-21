@@ -15,6 +15,49 @@ const extOf = (name, fallback) => { const m = /\.([a-z0-9]{2,5})$/i.exec(name ||
 const AUDIO_TYPES = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg' };
 const IMG_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 
+// ---------- portrait only ----------
+// iOS does not let home screen web apps lock rotation, so when the phone turns sideways the whole app is
+// turned back the other way: it stays upright to the phone like a portrait-only app, and taps still line up.
+const ROT = { mode: 0, W: 0, H: 0 }; // mode 0 = upright, 90 / -90 = turned back
+function lockPortrait() {
+  const root = $('root'); if (!root) return;
+  const W = window.innerWidth, H = window.innerHeight;
+  let ang = 0;
+  if (W > H) {
+    ang = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : (typeof window.orientation === 'number' ? window.orientation : 90);
+    ang = ((ang % 360) + 360) % 360 === 270 ? -90 : 90;
+  }
+  ROT.mode = ang; ROT.W = W; ROT.H = H;
+  if (!ang) {
+    root.style.cssText = '';
+    root.style.setProperty('--app-h', H + 'px');
+    return;
+  }
+  // portrait-shaped box: as wide as the screen is tall, as tall as it is wide
+  root.style.cssText = 'inset:auto;left:0;top:0;width:' + H + 'px;height:' + W + 'px;transform:' +
+    (ang === 90 ? 'translateY(' + H + 'px) rotate(-90deg)' : 'translateX(' + W + 'px) rotate(90deg)');
+  root.style.setProperty('--app-h', W + 'px');
+  // the notch is on the side that is now the app's top; the home bar no longer sits under the tab bar
+  root.style.setProperty('--safe-t', ang === 90 ? 'env(safe-area-inset-left, 0px)' : 'env(safe-area-inset-right, 0px)');
+  root.style.setProperty('--safe-b', '12px');
+}
+// screen point -> point inside the (possibly turned) app
+function toLocal(X, Y) {
+  if (ROT.mode === 90) return { x: ROT.H - Y, y: X };
+  if (ROT.mode === -90) return { x: Y, y: ROT.W - X };
+  return { x: X, y: Y };
+}
+function localRect(el) {
+  const r = el.getBoundingClientRect(); const a = toLocal(r.left, r.top), b = toLocal(r.right, r.bottom);
+  const left = Math.min(a.x, b.x), right = Math.max(a.x, b.x);
+  return { left, right, width: right - left };
+}
+const localX = (e) => toLocal(e.clientX, e.clientY).x;
+lockPortrait();
+window.addEventListener('resize', lockPortrait);
+window.addEventListener('orientationchange', () => setTimeout(lockPortrait, 250));
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', () => setTimeout(lockPortrait, 50));
+
 const I = {
   note: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>',
   noteBig: '<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>',
@@ -458,31 +501,36 @@ function selectTab(tab) {
   }
   show(tab);
 }
-function moveHighlight() { const i = Math.max(0, TABS.indexOf(V.tab)); $('nav-hl').style.transform = 'translateX(' + (i * 100) + '%)'; }
+let hlPlaced = false;
+function moveHighlight() {
+  const hl = $('nav-hl'); const i = Math.max(0, TABS.indexOf(V.tab));
+  if (!hlPlaced) { hl.style.transition = 'none'; hl.style.transform = 'translateX(' + (i * 100) + '%)'; void hl.offsetWidth; hl.style.transition = ''; hlPlaced = true; return; }
+  hl.style.transform = 'translateX(' + (i * 100) + '%)';
+}
 // press and slide across the tab bar: a glass lens follows your finger; let go to open that tab
 (() => {
   const nav = $('nav'), lens = $('nav-lens'), btns = Array.from(nav.querySelectorAll('button'));
   let down = false, startX = 0, moved = false;
-  const idxAt = (x) => { const r = nav.getBoundingClientRect(); const w = (r.width - 10) / 4; return Math.min(3, Math.max(0, Math.floor((x - r.left - 5) / w))); };
+  const idxAt = (x) => { const r = localRect(nav); const w = (r.width - 10) / 4; return Math.min(3, Math.max(0, Math.floor((x - r.left - 5) / w))); };
   const place = (x) => {
-    const r = nav.getBoundingClientRect(); const w = (r.width - 10) / 4 + 18;
+    const r = localRect(nav); const w = (r.width - 10) / 4 + 18;
     lens.style.width = w + 'px';
     const left = Math.min(r.width - w + 9, Math.max(-9, x - r.left - w / 2));
     lens.style.left = left + 'px';
     const hot = idxAt(x); btns.forEach((b, i) => b.classList.toggle('hot', i === hot));
   };
   nav.addEventListener('pointerdown', (e) => {
-    down = true; moved = false; startX = e.clientX;
+    down = true; moved = false; startX = localX(e);
     try { nav.setPointerCapture(e.pointerId); } catch (err) {}
-    const r = nav.getBoundingClientRect(); const w = (r.width - 10) / 4;
-    place(r.left + 5 + w * (idxAt(e.clientX) + 0.5));
+    const r = localRect(nav); const w = (r.width - 10) / 4;
+    place(r.left + 5 + w * (idxAt(localX(e)) + 0.5));
     nav.classList.add('drag');
   });
-  nav.addEventListener('pointermove', (e) => { if (!down) return; if (Math.abs(e.clientX - startX) > 4) moved = true; if (moved) place(e.clientX); });
+  nav.addEventListener('pointermove', (e) => { if (!down) return; if (Math.abs(localX(e) - startX) > 4) moved = true; if (moved) place(localX(e)); });
   const end = (e, cancel) => {
     if (!down) return; down = false;
     nav.classList.remove('drag'); btns.forEach((b) => b.classList.remove('hot'));
-    if (!cancel) selectTab(TABS[idxAt(e.clientX)]);
+    if (!cancel) selectTab(TABS[idxAt(localX(e))]);
   };
   nav.addEventListener('pointerup', (e) => end(e, false));
   nav.addEventListener('pointercancel', (e) => end(e, true));
@@ -640,11 +688,11 @@ $('p-now').addEventListener('click', (e) => {
 let seeking = false;
 function bindSeek() {
   const el = $('seek'); if (!el) return;
-  const pct = (x) => { const r = el.getBoundingClientRect(); return Math.min(1, Math.max(0, (x - r.left) / r.width)); };
+  const pct = (x) => { const r = localRect(el); return Math.min(1, Math.max(0, (x - r.left) / r.width)); };
   const paint = (f) => { $('seek-fill').style.width = (f * 100) + '%'; $('seek-knob').style.left = (f * 100) + '%'; $('t-cur').textContent = fmtTime(f * (audio.duration || 0)); };
-  el.addEventListener('pointerdown', (e) => { if (!isFinite(audio.duration)) return; seeking = true; el.classList.add('drag'); el.setPointerCapture(e.pointerId); paint(pct(e.clientX)); });
-  el.addEventListener('pointermove', (e) => { if (seeking) paint(pct(e.clientX)); });
-  const end = (e) => { if (!seeking) return; seeking = false; el.classList.remove('drag'); const f = pct(e.clientX); if (isFinite(audio.duration)) { held = null; audio.currentTime = f * audio.duration; } };
+  el.addEventListener('pointerdown', (e) => { if (!isFinite(audio.duration)) return; seeking = true; el.classList.add('drag'); el.setPointerCapture(e.pointerId); paint(pct(localX(e))); });
+  el.addEventListener('pointermove', (e) => { if (seeking) paint(pct(localX(e))); });
+  const end = (e) => { if (!seeking) return; seeking = false; el.classList.remove('drag'); const f = pct(localX(e)); if (isFinite(audio.duration)) { held = null; audio.currentTime = f * audio.duration; } };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', () => { seeking = false; el.classList.remove('drag'); });
 }
 function updateTime() {
