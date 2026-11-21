@@ -1034,19 +1034,6 @@ function refreshAll() {
   updateMini();
 }
 
-// ---------- fit the screen ----------
-// Some iOS versions give home screen web apps a page that stops short of the bottom of the screen,
-// leaving a black strip under the tab bar. Measure the shortfall and stretch the fixed layers into it.
-function fitScreen() {
-  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-  const portrait = window.innerHeight > window.innerWidth;
-  const gap = standalone && portrait ? Math.round(screen.height - window.innerHeight) : 0;
-  document.documentElement.style.setProperty('--vgap', (gap > 0 && gap < 140 ? gap : 0) + 'px');
-}
-fitScreen();
-window.addEventListener('resize', fitScreen);
-window.addEventListener('orientationchange', () => setTimeout(fitScreen, 300));
-
 // ---------- start ----------
 (async () => {
   try { await DB.open(); } catch (e) { document.body.insertAdjacentHTML('beforeend', '<div class="empty" style="position:fixed;inset:0;z-index:50;padding-top:40vh">Groove could not open its storage on this device.</div>'); return; }
