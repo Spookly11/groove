@@ -361,6 +361,8 @@ if ('mediaSession' in navigator) {
   on('previoustrack', () => prev());
   on('nexttrack', () => next(true));
   on('seekto', (d) => { if (d.seekTime != null) audio.currentTime = d.seekTime; });
+  on('seekbackward', (d) => { audio.currentTime = Math.max(0, audio.currentTime - ((d && d.seekOffset) || 10)); });
+  on('seekforward', (d) => { audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + ((d && d.seekOffset) || 10)); });
 }
 try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
 
@@ -414,21 +416,54 @@ function show(tab) {
   V.tab = tab;
   for (const t of ['now', 'library', 'playlists', 'settings']) $('p-' + t).hidden = t !== tab;
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  moveHighlight();
   if (tab === 'now') drawNow();
   if (tab === 'library') drawLibrary();
   if (tab === 'playlists') drawPlaylists();
   if (tab === 'settings') drawSettings();
   updateMini();
 }
-document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => {
-  if (b.dataset.tab === V.tab) { // tapping the open tab goes back to its top
+const TABS = ['now', 'library', 'playlists', 'settings'];
+function selectTab(tab) {
+  if (tab === V.tab) { // tapping the open tab goes back to its top
     if (V.tab === 'playlists' && V.plId) { V.plId = null; drawPlaylists(); }
     else if (V.tab === 'settings' && V.stats) { V.stats = false; drawSettings(); }
     $('p-' + V.tab).scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
-  show(b.dataset.tab);
-}));
+  show(tab);
+}
+function moveHighlight() { const i = Math.max(0, TABS.indexOf(V.tab)); $('nav-hl').style.transform = 'translateX(' + (i * 100) + '%)'; }
+// press and slide across the tab bar: a glass lens follows your finger; let go to open that tab
+(() => {
+  const nav = $('nav'), lens = $('nav-lens'), btns = Array.from(nav.querySelectorAll('button'));
+  let down = false, startX = 0, moved = false;
+  const idxAt = (x) => { const r = nav.getBoundingClientRect(); const w = (r.width - 10) / 4; return Math.min(3, Math.max(0, Math.floor((x - r.left - 5) / w))); };
+  const place = (x) => {
+    const r = nav.getBoundingClientRect(); const w = (r.width - 10) / 4 + 18;
+    lens.style.width = w + 'px';
+    const left = Math.min(r.width - w + 9, Math.max(-9, x - r.left - w / 2));
+    lens.style.left = left + 'px';
+    const hot = idxAt(x); btns.forEach((b, i) => b.classList.toggle('hot', i === hot));
+  };
+  nav.addEventListener('pointerdown', (e) => {
+    down = true; moved = false; startX = e.clientX;
+    try { nav.setPointerCapture(e.pointerId); } catch (err) {}
+    const r = nav.getBoundingClientRect(); const w = (r.width - 10) / 4;
+    place(r.left + 5 + w * (idxAt(e.clientX) + 0.5));
+    nav.classList.add('drag');
+  });
+  nav.addEventListener('pointermove', (e) => { if (!down) return; if (Math.abs(e.clientX - startX) > 4) moved = true; if (moved) place(e.clientX); });
+  const end = (e, cancel) => {
+    if (!down) return; down = false;
+    nav.classList.remove('drag'); btns.forEach((b) => b.classList.remove('hot'));
+    if (!cancel) selectTab(TABS[idxAt(e.clientX)]);
+  };
+  nav.addEventListener('pointerup', (e) => end(e, false));
+  nav.addEventListener('pointercancel', (e) => end(e, true));
+  // keyboard / VoiceOver activation
+  btns.forEach((b) => b.addEventListener('click', (e) => { if (e.detail === 0) selectTab(b.dataset.tab); }));
+})();
 
 function covHtml(key, cls = 'cov') {
   const u = coverUrl(key);
@@ -494,7 +529,7 @@ $('p-library').addEventListener('click', (e) => {
   if (a === 'add') { pickAudio(); return; }
   if (a === 'go-import') { show('settings'); startImport(); return; }
   if (a === 'shuffle-all') { const q = libraryOrder(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }, null, { shuffle: true }); return; }
-  if (t.classList.contains('song')) playFrom(libraryOrder(), { type: 'library', name: 'Library' }, t.dataset.id);
+  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { togglePlay(); return; } playFrom(libraryOrder(), { type: 'library', name: 'Library' }, t.dataset.id); }
 });
 
 // Playlists
@@ -505,7 +540,7 @@ function drawPlaylists() {
     p.innerHTML = '<div class="head"><h1>Playlists</h1><button class="icon-btn cloudy" data-act="new-pl" aria-label="New playlist">' + I.plus + '</button></div>' +
       '<div class="pl-grid">' + L.playlists.map((pl) => '<button class="pl-card press" data-pl="' + esc(pl.id) + '">' +
         covHtml('p:' + pl.id, 'pl-cover') + '<div class="pl-name">' + esc(pl.name) + '</div><div class="pl-count">' + plural(pl.songIds.length, 'song') + '</div></button>').join('') +
-      '<button class="pl-card press" data-act="new-pl"><div class="pl-cover new">' + I.plus + '</div><div class="pl-name">New playlist</div></button></div>';
+      '</div>' + (L.playlists.length ? '' : '<div class="empty"><div class="big">No playlists yet</div>Tap + to make one.</div>');
     return;
   }
   const pl = plById(V.plId);
@@ -528,7 +563,7 @@ $('p-playlists').addEventListener('click', (e) => {
   const q = pl ? pl.songIds.filter(songById) : [];
   if (a === 'pl-play') { playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, null, { shuffle: false }); return; }
   if (a === 'pl-shuffle') { playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, null, { shuffle: true }); return; }
-  if (t.classList.contains('song')) playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, t.dataset.id);
+  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { togglePlay(); return; } playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, t.dataset.id); }
 });
 
 // Now Playing
@@ -589,8 +624,9 @@ function updateNow() {
     $('b-play').innerHTML = playing ? I.pauseBig : I.playBig; $('b-play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
     $('b-shuffle').classList.toggle('on', P.shuffle); $('b-shuffle').setAttribute('aria-pressed', P.shuffle);
     $('b-loop').classList.toggle('on', P.loop); $('b-loop').setAttribute('aria-pressed', P.loop);
-    const i = P.queue.indexOf(P.cur);
-    $('np-pos').textContent = i >= 0 ? 'Song ' + (i + 1) + ' of ' + P.queue.length : '';
+    const byDate = L.songs.slice().sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+    const i = byDate.findIndex((x) => x.id === P.cur);
+    $('np-pos').textContent = i >= 0 ? 'Song ' + (i + 1) + ' of ' + byDate.length : '';
     updateTime();
   }
   $('mini-play').innerHTML = playing ? I.pauseSm : I.playSm; $('mini-play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
@@ -653,7 +689,7 @@ function drawStats() {
     '<div class="stat-grid"><div class="stat cloudy"><div class="k">All time listened</div><div class="v">' + fmtHours(L.totalListenTime) + '</div></div>' +
     '<div class="stat cloudy"><div class="k">Listened past week</div><div class="v">' + fmtHours(week) + '</div></div></div>' +
     '<div class="section-label">Top songs</div><div class="card cloudy" style="padding:4px 0">' +
-    (top.length ? top.map((s, i) => '<div class="top"><div class="rk' + (i === 0 ? ' first' : '') + '">' + (i + 1) + '</div>' + covHtml('ct:' + s.id) +
+    (top.length ? top.map((s, i) => '<div class="top"><div class="rk' + (i < 3 ? ' r' + (i + 1) : '') + '">' + (i + 1) + '</div>' + covHtml('ct:' + s.id) +
       '<div class="meta"><div class="t">' + esc(s.title) + '</div></div><div class="s" style="margin:0">' + plural(s.playCount, 'play') + '</div></div>').join('')
       : '<div class="empty" style="padding:24px">Play some songs all the way through to see your top songs.</div>') +
     '</div><button class="danger-btn" data-act="reset-stats">Reset listening stats</button>';
