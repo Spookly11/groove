@@ -338,8 +338,25 @@ async function preloadNext(force) {
   if (ready.el === sp && ready.id === id) return;
   try { sp.pause(); await srcFor(sp, id); sp.preload = 'auto'; sp.load(); ready = { el: sp, id }; } catch (e) { ready = { el: null, id: null }; }
 }
+// Head start: load a song into the spare player as soon as a finger touches it in a list,
+// so by the time the finger lifts (a tap) it is ready to play.
+let prefetch = { id: null, p: null };
+let prefetchUndo = 0;
+function prefetchSong(id) {
+  if (!id || id === P.cur || (ready.id === id && ready.el) || prefetch.id === id) return;
+  const sp = other();
+  if (!sp.paused) return;
+  clearTimeout(prefetchUndo);
+  ready = { el: null, id: null };
+  const p = (async () => { try { await srcFor(sp, id); sp.preload = 'auto'; sp.load(); if (prefetch.id === id) ready = { el: sp, id }; } catch (e) {} })();
+  prefetch = { id, p };
+  // not tapped after all (e.g. the list was scrolled): put the real next song back in the spare player
+  prefetchUndo = setTimeout(() => { if (prefetch.id === id) { prefetch = { id: null, p: null }; if (P.cur) preloadNext(true); } }, 2500);
+}
 async function playSong(id, user) {
   const s = songById(id); if (!s) return;
+  if (prefetch.id === id && prefetch.p) { await Promise.race([prefetch.p, new Promise((r) => setTimeout(r, 400))]); }
+  prefetch = { id: null, p: null }; clearTimeout(prefetchUndo);
   const prevEl = audio;
   const pre = ready.el && ready.id === id;
   if (pre) { audio = ready.el; ready = { el: null, id: null }; try { audio.currentTime = 0; } catch (e) {} prevEl.pause(); }
@@ -604,6 +621,9 @@ function drawLibList() {
   }
   if (!ids.length) { el.innerHTML = '<div class="empty">No songs match "' + esc(V.q) + '"</div>'; return; }
   el.innerHTML = ids.map((id, i) => songRow(songById(id), i, false)).join('');
+}
+for (const pg of ['p-library', 'p-playlists']) {
+  $(pg).addEventListener('pointerdown', (e) => { if (e.target.closest('.more')) return; const r = e.target.closest('.song'); if (r) prefetchSong(r.dataset.id); }, { passive: true });
 }
 $('p-library').addEventListener('click', (e) => {
   const t = e.target.closest('[data-sort],[data-act],[data-more],.song'); if (!t) return;
