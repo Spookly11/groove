@@ -341,7 +341,7 @@ function adoptQueue(queue, ctx) {
   saveState(); updateNow();
 }
 function togglePlay() {
-  if (!P.cur) { const q = libraryOrder(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }); return; }
+  if (!P.cur) { const q = libraryQueue(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }); return; }
   if (audio.paused) { if (!audio.src) { playSong(P.cur, true); return; } resumeNow(); setTimeout(unlockSpare, 600); }
   else pauseNow();
 }
@@ -515,6 +515,12 @@ function sortedIds(ids) {
   list.sort((a, b) => cmp(a, b) * sortDir);
   return list.map((s) => s.id);
 }
+// Next and Previous in the Library always go by date added, oldest to newest (the same order as
+// "Song x of x"), whichever way the list is sorted on screen. Search still limits which songs play.
+function libraryQueue() {
+  const q = V.q.trim().toLowerCase();
+  return L.songs.filter((s) => !q || s.title.toLowerCase().includes(q)).sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0)).map((s) => s.id);
+}
 function libraryOrder() {
   const q = V.q.trim().toLowerCase();
   return sortedIds(L.songs.filter((s) => !q || s.title.toLowerCase().includes(q)).map((s) => s.id));
@@ -551,15 +557,14 @@ $('p-library').addEventListener('click', (e) => {
     const by = t.dataset.sort;
     if (L.settings.sortBy === by) L.settings.sortDir *= -1; else { L.settings.sortBy = by; L.settings.sortDir = by === 'name' ? 1 : -1; }
     save(); drawLibrary();
-    if (P.cur && P.ctx.type === 'library') adoptQueue(sortedIds(P.queue), P.ctx);
     return;
   }
   if (t.dataset.more) { songMenu(t.dataset.more, null); return; }
   const a = t.dataset.act;
   if (a === 'add') { pickAudio(); return; }
   if (a === 'go-import') { show('settings'); startImport(); return; }
-  if (a === 'shuffle-all') { const q = libraryOrder(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }, null, { shuffle: true }); return; }
-  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { adoptQueue(libraryOrder(), { type: 'library', name: 'Library' }); togglePlay(); return; } playFrom(libraryOrder(), { type: 'library', name: 'Library' }, t.dataset.id); }
+  if (a === 'shuffle-all') { const q = libraryQueue(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }, null, { shuffle: true }); return; }
+  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { adoptQueue(libraryQueue(), { type: 'library', name: 'Library' }); togglePlay(); return; } playFrom(libraryQueue(), { type: 'library', name: 'Library' }, t.dataset.id); }
 });
 
 // Playlists
@@ -1111,7 +1116,7 @@ function refreshAll() {
   // put back the last song (paused) so Now Playing and the lock screen pick up where you left off
   const st = L.state;
   if (st && st.songId && songById(st.songId)) {
-    P.queue = (st.queue || []).filter(songById); if (!P.queue.length) P.queue = libraryOrder();
+    P.queue = (st.queue || []).filter(songById); if (!P.queue.length) P.queue = libraryQueue();
     P.ctx = st.ctx || P.ctx; P.shuffle = !!st.shuffle; P.loop = !!st.loop; P.cur = st.songId;
     try { await srcFor(audio, P.cur); pendingSeek = st.pos || 0; audio.load(); } catch (e) {}
     setMeta(songById(P.cur));
