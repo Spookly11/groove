@@ -296,6 +296,7 @@ async function playSong(id, user) {
   if (pre) { audio = ready.el; ready = { el: null, id: null }; try { audio.currentTime = 0; } catch (e) {} prevEl.pause(); }
   else { other().pause(); if (ready.el === audio) ready = { el: null, id: null }; try { await srcFor(audio, id); } catch (e) { toast('This song\'s file is missing.'); return; } }
   if (P.cur && P.cur !== id) { P.history.push(P.cur); if (P.history.length > 200) P.history.shift(); }
+  held = null;
   P.cur = id;
   if (P.shuffle) { if (!P.played.includes(id)) P.played.push(id); if (P.played.length >= P.queue.length) P.played = [id]; }
   audio.loop = P.loop;
@@ -315,10 +316,25 @@ function playFrom(queue, ctx, startId, opts = {}) {
   ready = { el: null, id: null };
   playSong(id, true);
 }
+// iOS fades a song out after pause() and keeps the position moving for a moment, so pausing would
+// skip a little ahead. Remember where pause was pressed and put the song back there.
+let held = null;
+function pauseNow() {
+  const el = audio, t = el.currentTime;
+  held = { el, t };
+  el.pause();
+  const fix = () => { if (held && held.el === el && el.paused && Math.abs(el.currentTime - t) > 0.04) { try { el.currentTime = t; } catch (e) {} } };
+  setTimeout(fix, 0); setTimeout(fix, 300); setTimeout(fix, 800);
+}
+function resumeNow() {
+  if (held && held.el === audio && Math.abs(audio.currentTime - held.t) > 0.04) { try { audio.currentTime = held.t; } catch (e) {} }
+  held = null;
+  const p = audio.play(); if (p) p.catch(() => {});
+}
 function togglePlay() {
   if (!P.cur) { const q = libraryOrder(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }); return; }
-  if (audio.paused) { if (!audio.src) { playSong(P.cur, true); return; } audio.play().catch(() => {}); unlockSpare(); }
-  else audio.pause();
+  if (audio.paused) { if (!audio.src) { playSong(P.cur, true); return; } resumeNow(); setTimeout(unlockSpare, 600); }
+  else pauseNow();
 }
 function next(user) {
   if (!P.cur) return;
@@ -329,7 +345,7 @@ function next(user) {
 }
 function prev() {
   if (!P.cur) return;
-  if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+  if (audio.currentTime > 3) { held = null; audio.currentTime = 0; return; }
   let id;
   if (P.shuffle && P.history.length) { id = P.history.pop(); playSong(id, true); P.history.pop(); return; }
   const i = P.queue.indexOf(P.cur);
@@ -356,13 +372,13 @@ async function setMeta(s) {
 }
 if ('mediaSession' in navigator) {
   const on = (a, fn) => { try { navigator.mediaSession.setActionHandler(a, fn); } catch (e) {} };
-  on('play', () => { if (P.cur) audio.play().catch(() => {}); });
-  on('pause', () => audio.pause());
+  on('play', () => { if (P.cur) resumeNow(); });
+  on('pause', () => pauseNow());
   on('previoustrack', () => prev());
   on('nexttrack', () => next(true));
-  on('seekto', (d) => { if (d.seekTime != null) audio.currentTime = d.seekTime; });
-  on('seekbackward', (d) => { audio.currentTime = Math.max(0, audio.currentTime - ((d && d.seekOffset) || 10)); });
-  on('seekforward', (d) => { audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + ((d && d.seekOffset) || 10)); });
+  on('seekto', (d) => { if (d.seekTime != null) { held = null; audio.currentTime = d.seekTime; } });
+  on('seekbackward', (d) => { held = null; audio.currentTime = Math.max(0, audio.currentTime - ((d && d.seekOffset) || 10)); });
+  on('seekforward', (d) => { held = null; audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + ((d && d.seekOffset) || 10)); });
 }
 try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
 
@@ -378,7 +394,7 @@ function tickListen() {
     if (now - statSave > 15000) { statSave = now; saveState(true); }
   }
   lastTick = audio.paused ? 0 : now;
-  if (sleep.at && now >= sleep.at) { sleep.at = 0; audio.pause(); toast('Sleep timer: paused'); drawSettingsIfOpen(); }
+  if (sleep.at && now >= sleep.at) { sleep.at = 0; pauseNow(); toast('Sleep timer: paused'); drawSettingsIfOpen(); }
 }
 setInterval(tickListen, 1000);
 for (const el of players) {
@@ -609,7 +625,7 @@ function bindSeek() {
   const paint = (f) => { $('seek-fill').style.width = (f * 100) + '%'; $('seek-knob').style.left = (f * 100) + '%'; $('t-cur').textContent = fmtTime(f * (audio.duration || 0)); };
   el.addEventListener('pointerdown', (e) => { if (!isFinite(audio.duration)) return; seeking = true; el.classList.add('drag'); el.setPointerCapture(e.pointerId); paint(pct(e.clientX)); });
   el.addEventListener('pointermove', (e) => { if (seeking) paint(pct(e.clientX)); });
-  const end = (e) => { if (!seeking) return; seeking = false; el.classList.remove('drag'); const f = pct(e.clientX); if (isFinite(audio.duration)) audio.currentTime = f * audio.duration; };
+  const end = (e) => { if (!seeking) return; seeking = false; el.classList.remove('drag'); const f = pct(e.clientX); if (isFinite(audio.duration)) { held = null; audio.currentTime = f * audio.duration; } };
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', () => { seeking = false; el.classList.remove('drag'); });
 }
 function updateTime() {
