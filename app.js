@@ -1113,15 +1113,8 @@ function refreshAll() {
   const covers = await DB.all('covers');
   for (const [k, b] of covers) if (k.startsWith('ct:') || k.startsWith('p:') || k.startsWith('t:') || k.startsWith('c:')) setCover(k, b);
   applyTheme();
-  // put back the last song (paused) so Now Playing and the lock screen pick up where you left off
-  const st = L.state;
-  if (st && st.songId && songById(st.songId)) {
-    P.queue = (st.queue || []).filter(songById); if (!P.queue.length) P.queue = libraryQueue();
-    P.ctx = st.ctx || P.ctx; P.shuffle = !!st.shuffle; P.loop = !!st.loop; P.cur = st.songId;
-    try { await srcFor(audio, P.cur); pendingSeek = st.pos || 0; audio.load(); } catch (e) {}
-    setMeta(songById(P.cur));
-    setTimeout(preloadNext, 1500);
-  }
+  // each launch starts fresh: nothing in Now Playing until you pick a song
+  L.state = null;
   show('library');
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
