@@ -332,6 +332,14 @@ function resumeNow() {
   held = null;
   const p = audio.play(); if (p) p.catch(() => {});
 }
+// switch the list Next/Previous follow without restarting the song that's playing
+function adoptQueue(queue, ctx) {
+  P.queue = queue.slice(); P.ctx = ctx;
+  if (!P.queue.includes(P.cur)) P.queue.unshift(P.cur);
+  P.played = P.cur ? [P.cur] : [];
+  P.upcoming = null; ready = { el: null, id: null }; preloadNext(true);
+  saveState(); updateNow();
+}
 function togglePlay() {
   if (!P.cur) { const q = libraryOrder(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }); return; }
   if (audio.paused) { if (!audio.src) { playSong(P.cur, true); return; } resumeNow(); setTimeout(unlockSpare, 600); }
@@ -498,15 +506,18 @@ function markPlaying() {
 }
 
 // Library
-function libraryOrder() {
+function sortedIds(ids) {
   const { sortBy, sortDir } = L.settings;
-  const q = V.q.trim().toLowerCase();
-  let list = L.songs.filter((s) => !q || s.title.toLowerCase().includes(q));
+  const list = ids.map(songById).filter(Boolean);
   const cmp = sortBy === 'name' ? (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true })
     : sortBy === 'plays' ? (a, b) => (a.playCount || 0) - (b.playCount || 0) || a.title.localeCompare(b.title)
       : (a, b) => (a.addedAt || 0) - (b.addedAt || 0);
   list.sort((a, b) => cmp(a, b) * sortDir);
   return list.map((s) => s.id);
+}
+function libraryOrder() {
+  const q = V.q.trim().toLowerCase();
+  return sortedIds(L.songs.filter((s) => !q || s.title.toLowerCase().includes(q)).map((s) => s.id));
 }
 function drawLibrary() {
   const p = $('p-library');
@@ -539,14 +550,16 @@ $('p-library').addEventListener('click', (e) => {
   if (t.dataset.sort) {
     const by = t.dataset.sort;
     if (L.settings.sortBy === by) L.settings.sortDir *= -1; else { L.settings.sortBy = by; L.settings.sortDir = by === 'name' ? 1 : -1; }
-    save(); drawLibrary(); return;
+    save(); drawLibrary();
+    if (P.cur && P.ctx.type === 'library') adoptQueue(sortedIds(P.queue), P.ctx);
+    return;
   }
   if (t.dataset.more) { songMenu(t.dataset.more, null); return; }
   const a = t.dataset.act;
   if (a === 'add') { pickAudio(); return; }
   if (a === 'go-import') { show('settings'); startImport(); return; }
   if (a === 'shuffle-all') { const q = libraryOrder(); if (q.length) playFrom(q, { type: 'library', name: 'Library' }, null, { shuffle: true }); return; }
-  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { togglePlay(); return; } playFrom(libraryOrder(), { type: 'library', name: 'Library' }, t.dataset.id); }
+  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { adoptQueue(libraryOrder(), { type: 'library', name: 'Library' }); togglePlay(); return; } playFrom(libraryOrder(), { type: 'library', name: 'Library' }, t.dataset.id); }
 });
 
 // Playlists
@@ -580,7 +593,7 @@ $('p-playlists').addEventListener('click', (e) => {
   const q = pl ? pl.songIds.filter(songById) : [];
   if (a === 'pl-play') { playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, null, { shuffle: false }); return; }
   if (a === 'pl-shuffle') { playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, null, { shuffle: true }); return; }
-  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { togglePlay(); return; } playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, t.dataset.id); }
+  if (t.classList.contains('song')) { if (t.dataset.id === P.cur) { adoptQueue(q, { type: 'playlist', id: pl.id, name: pl.name }); togglePlay(); return; } playFrom(q, { type: 'playlist', id: pl.id, name: pl.name }, t.dataset.id); }
 });
 
 // Now Playing
