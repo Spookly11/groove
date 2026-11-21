@@ -596,21 +596,41 @@ function libraryOrder() {
   const q = V.q.trim().toLowerCase();
   return sortedIds(L.songs.filter((s) => !q || s.title.toLowerCase().includes(q)).map((s) => s.id));
 }
+// The search box. iOS keeps an "Undo Typing" history for a text box even after you leave it, which shows
+// up when you shake the phone. Swapping in a fresh box when you finish searching clears that history.
+function makeSearchBox(value) {
+  const slot = $('lib-q-slot'); if (!slot) return;
+  const q = document.createElement('input');
+  q.id = 'lib-q'; q.type = 'search'; q.value = value;
+  q.setAttribute('enterkeyhint', 'search'); q.setAttribute('autocomplete', 'off'); q.setAttribute('autocorrect', 'off');
+  q.setAttribute('autocapitalize', 'off'); q.spellcheck = false; q.setAttribute('aria-label', 'Search songs');
+  q.placeholder = 'Search ' + plural(L.songs.length, 'song');
+  q.addEventListener('input', () => { V.q = q.value; $('lib-clear').hidden = !q.value; drawLibList(); });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); finishSearch(); } });
+  q.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('lib-q')) makeSearchBox(V.q); }, 50));
+  slot.replaceChildren(q);
+  $('lib-clear').hidden = !value;
+}
+function finishSearch(clear) {
+  const q = $('lib-q');
+  if (clear && q) q.value = '';
+  if (q) q.blur();
+  makeSearchBox(V.q);
+}
 function drawLibrary() {
   const p = $('p-library');
   if (!p.dataset.built) {
     p.dataset.built = '1';
     p.innerHTML = '<div class="head"><h1>Library</h1><button class="icon-btn cloudy" data-act="add" aria-label="Add songs">' + I.plus + '</button></div>' +
-      '<form class="search cloudy" id="lib-form" role="search" action="#">' + I.search + '<input id="lib-q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Search songs"></form>' +
+      '<form class="search cloudy" id="lib-form" role="search" action="#">' + I.search + '<span id="lib-q-slot" style="flex:1;min-width:0;display:flex"></span>' +
+      '<button type="button" class="clear-q" id="lib-clear" aria-label="Clear search" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" opacity=".35"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" stroke="#09090a" stroke-width="2.2" stroke-linecap="round"/></svg></button></form>' +
       '<div class="chips" id="lib-chips"></div><div class="songs" id="lib-list"></div>';
-    $('lib-q').addEventListener('input', (e) => { V.q = e.target.value; drawLibList(); });
-    // the keyboard's Search key finishes the search: close the keyboard and leave the box
-    const done = () => { const q = $('lib-q'); q.blur(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
-    $('lib-form').addEventListener('submit', (e) => { e.preventDefault(); done(); });
-    $('lib-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); done(); } });
-    $('lib-form').addEventListener('click', (e) => { if (e.target === e.currentTarget || e.target.closest('svg')) $('lib-q').focus(); });
+    $('lib-form').addEventListener('submit', (e) => { e.preventDefault(); finishSearch(); });
+    $('lib-form').addEventListener('click', (e) => { if (e.target === e.currentTarget || (e.target.closest('svg') && !e.target.closest('#lib-clear'))) $('lib-q').focus(); });
+    $('lib-clear').addEventListener('click', () => { V.q = ''; finishSearch(true); drawLibList(); });
+    makeSearchBox('');
   }
-  $('lib-q').placeholder = 'Search ' + plural(L.songs.length, 'song');
+  if ($('lib-q')) $('lib-q').placeholder = 'Search ' + plural(L.songs.length, 'song');
   const { sortBy, sortDir } = L.settings;
   const chip = (by, label) => '<button class="chip cloudy' + (sortBy === by ? ' on' : '') + '" data-sort="' + by + '">' + label + (sortBy === by ? (sortDir < 0 ? I.down : I.up) : '') + '</button>';
   $('lib-chips').innerHTML = chip('added', 'Date added') + chip('name', 'Name') + chip('plays', 'Plays') +
