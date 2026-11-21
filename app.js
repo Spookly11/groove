@@ -54,9 +54,15 @@ function localRect(el) {
 }
 const localX = (e) => toLocal(e.clientX, e.clientY).x;
 lockPortrait();
-window.addEventListener('resize', lockPortrait);
-window.addEventListener('orientationchange', () => setTimeout(lockPortrait, 250));
-if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', () => setTimeout(lockPortrait, 50));
+// iOS reports the new size a little after turning, and can leave the page zoomed or scrolled: settle it a few times
+function settleRotation() {
+  lockPortrait(); window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+}
+function onTurn() { settleRotation(); [80, 250, 500, 900].forEach((t) => setTimeout(settleRotation, t)); }
+window.addEventListener('resize', onTurn);
+window.addEventListener('orientationchange', onTurn);
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', onTurn);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', onTurn);
 
 const I = {
   note: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>',
