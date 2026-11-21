@@ -601,9 +601,14 @@ function drawLibrary() {
   if (!p.dataset.built) {
     p.dataset.built = '1';
     p.innerHTML = '<div class="head"><h1>Library</h1><button class="icon-btn cloudy" data-act="add" aria-label="Add songs">' + I.plus + '</button></div>' +
-      '<label class="search cloudy">' + I.search + '<input id="lib-q" type="search" enterkeyhint="search" autocomplete="off" aria-label="Search songs"></label>' +
+      '<form class="search cloudy" id="lib-form" role="search" action="#">' + I.search + '<input id="lib-q" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Search songs"></form>' +
       '<div class="chips" id="lib-chips"></div><div class="songs" id="lib-list"></div>';
     $('lib-q').addEventListener('input', (e) => { V.q = e.target.value; drawLibList(); });
+    // the keyboard's Search key finishes the search: close the keyboard and leave the box
+    const done = () => { const q = $('lib-q'); q.blur(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); };
+    $('lib-form').addEventListener('submit', (e) => { e.preventDefault(); done(); });
+    $('lib-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); done(); } });
+    $('lib-form').addEventListener('click', (e) => { if (e.target === e.currentTarget || e.target.closest('svg')) $('lib-q').focus(); });
   }
   $('lib-q').placeholder = 'Search ' + plural(L.songs.length, 'song');
   const { sortBy, sortDir } = L.settings;
