@@ -281,8 +281,8 @@ function pickUpcoming() {
   const i = P.queue.indexOf(P.cur);
   return P.queue[(i + 1) % P.queue.length];
 }
-async function preloadNext() {
-  P.upcoming = pickUpcoming();
+async function preloadNext(force) {
+  if (force || !P.upcoming || P.upcoming === P.cur || !P.queue.includes(P.upcoming)) P.upcoming = pickUpcoming();
   const id = P.upcoming;
   if (!id || id === P.cur) { ready = { el: null, id: null }; return; }
   const sp = other();
@@ -299,6 +299,7 @@ async function playSong(id, user) {
   held = null;
   P.cur = id;
   if (P.shuffle) { if (!P.played.includes(id)) P.played.push(id); if (P.played.length >= P.queue.length) P.played = [id]; }
+  P.upcoming = pickUpcoming(); // decided now, so pressing Next right away goes to the right song
   audio.loop = P.loop;
   const pr = audio.play();
   if (pr) pr.catch(async () => { if (pre) { audio = prevEl; try { await srcFor(audio, id); audio.play().catch(() => {}); } catch (e) {} } });
@@ -352,7 +353,7 @@ function prev() {
   id = P.queue[(i - 1 + P.queue.length) % P.queue.length];
   playSong(id, true);
 }
-function setShuffle(on) { P.shuffle = on; P.played = P.cur ? [P.cur] : []; ready = { el: null, id: null }; preloadNext(); saveState(); updateNow(); }
+function setShuffle(on) { P.shuffle = on; P.played = P.cur ? [P.cur] : []; ready = { el: null, id: null }; preloadNext(true); saveState(); updateNow(); }
 function setLoop(on) { P.loop = on; audio.loop = on; saveState(); updateNow(); }
 
 // lock screen and Control Center
