@@ -462,7 +462,7 @@ try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } ca
 
 // listening time, play counts, sleep timer
 let lastTick = 0, statSave = 0, lastPos = 0;
-const sleep = { at: 0, endOfSong: false };
+const sleep = { at: 0, pick: 30 }; // pick = minutes last chosen in the picker
 function tickListen() {
   const now = Date.now();
   if (!audio.paused && lastTick) {
@@ -491,7 +491,6 @@ for (const el of players) {
   el.addEventListener('ended', act(() => {
     const s = songById(P.cur);
     if (s) { s.playCount = (s.playCount || 0) + 1; save(); }
-    if (sleep.endOfSong) { sleep.endOfSong = false; toast('Sleep timer: paused'); updateNow(); drawSettingsIfOpen(); return; }
     endedAt = Date.now();
     next(false);
   }));
@@ -795,7 +794,6 @@ $('mini-next').innerHTML = I.nextSm;
 // Settings
 function drawSettingsIfOpen() { if (V.tab === 'settings') drawSettings(); }
 function sleepLabel() {
-  if (sleep.endOfSong) return 'End of song';
   if (sleep.at) return Math.max(1, Math.ceil((sleep.at - Date.now()) / 60000)) + ' min left';
   return 'Off';
 }
@@ -1086,13 +1084,31 @@ function themeDialog(t) {
 }
 
 // ---------- sleep timer ----------
+// Sleep timer: pick minutes with the arrows (5 at a time, at least 5), then Start timer.
 function sleepSheet() {
-  const set = (min, end) => { sleep.at = min ? Date.now() + min * 60000 : 0; sleep.endOfSong = !!end; drawSettings(); if (min || end) toast(end ? 'Pausing at the end of this song' : 'Pausing in ' + min + ' minutes'); };
-  openSheet('Sleep timer', [
-    { label: 'Off', check: !sleep.at && !sleep.endOfSong, onClick: () => set(0, false) },
-    ...[15, 30, 45, 60, 90].map((m) => ({ label: m + ' minutes', onClick: () => set(m, false) })),
-    { label: 'End of current song', check: sleep.endOfSong, onClick: () => set(0, true) },
-  ]);
+  let min = Math.max(5, sleep.pick || 30);
+  const MAX = 300;
+  const fmtMin = (m) => (m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min');
+  const running = () => sleep.at && sleep.at > Date.now();
+  const draw = () => {
+    const left = running() ? Math.max(1, Math.ceil((sleep.at - Date.now()) / 60000)) : 0;
+    openDlg('<h2>Sleep timer</h2><p>' + (left ? 'Music pauses in ' + fmtMin(left) + '.' : 'Music pauses when the timer runs out.') + '</p>' +
+      '<div class="sleep-pick"><button class="sp-arrow" data-a="down" aria-label="5 minutes less"' + (min <= 5 ? ' disabled' : '') + '>' + I.back + '</button>' +
+      '<div class="sp-box cloudy" aria-live="polite"><span class="sp-num">' + min + '</span><span class="sp-unit">minutes</span></div>' +
+      '<button class="sp-arrow flip" data-a="up" aria-label="5 minutes more"' + (min >= MAX ? ' disabled' : '') + '>' + I.back + '</button></div>' +
+      '<div class="acts">' + (left ? '<button class="btn sec" data-a="stop">Stop timer</button>' : '<button class="btn sec" data-a="no">Cancel</button>') +
+      '<button class="btn accent" data-a="start">' + (left ? 'Restart timer' : 'Start timer') + '</button></div>');
+  };
+  draw();
+  $('dlg').onclick = (e) => {
+    const b = e.target.closest('[data-a]'); if (!b || b.disabled) return;
+    const a = b.dataset.a;
+    if (a === 'down') { min = Math.max(5, min - 5); draw(); return; }
+    if (a === 'up') { min = Math.min(MAX, min + 5); draw(); return; }
+    if (a === 'no') { closeDlg(); return; }
+    if (a === 'stop') { sleep.at = 0; closeDlg(); drawSettings(); toast('Sleep timer stopped'); return; }
+    if (a === 'start') { sleep.pick = min; sleep.at = Date.now() + min * 60000; closeDlg(); drawSettings(); toast('Pausing in ' + fmtMin(min)); }
+  };
 }
 setInterval(() => { if (sleep.at && V.tab === 'settings' && !V.stats) { const el = document.querySelector('[data-act="sleep"] .val'); if (el) el.textContent = sleepLabel(); } }, 15000);
 
