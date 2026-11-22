@@ -462,17 +462,19 @@ try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } ca
 
 // listening time, play counts, sleep timer
 let lastTick = 0, statSave = 0, lastPos = 0;
-const sleep = { at: 0, pick: 30 }; // pick = minutes last chosen in the picker
+const sleep = { left: 0, pick: 30 }; // left = ms of playing time until the timer pauses (counts down only while music plays)
+let sleepDue = false;
 function tickListen() {
   const now = Date.now();
   if (!audio.paused && lastTick) {
     const d = Math.min(now - lastTick, 2000);
     L.totalListenTime = (L.totalListenTime || 0) + d;
     const k = dayKey(); L.daily[k] = (L.daily[k] || 0) + d;
+    if (sleep.left > 0) { sleep.left -= d; if (sleep.left <= 0) { sleep.left = 0; sleepDue = true; } }
     if (now - statSave > 15000) { statSave = now; saveState(true); }
   }
   lastTick = audio.paused ? 0 : now;
-  if (sleep.at && now >= sleep.at) { sleep.at = 0; pauseNow(); toast('Sleep timer: paused'); drawSettingsIfOpen(); }
+  if (sleepDue) { sleepDue = false; pauseNow(); toast('Sleep timer: paused'); drawSettingsIfOpen(); }
 }
 setInterval(tickListen, 1000);
 for (const el of players) {
@@ -794,7 +796,7 @@ $('mini-next').innerHTML = I.nextSm;
 // Settings
 function drawSettingsIfOpen() { if (V.tab === 'settings') drawSettings(); }
 function sleepLabel() {
-  if (sleep.at) return Math.max(1, Math.ceil((sleep.at - Date.now()) / 60000)) + ' min left';
+  if (sleep.left > 0) return Math.max(1, Math.ceil(sleep.left / 60000)) + ' min left';
   return 'Off';
 }
 function drawSettings() {
@@ -1089,10 +1091,10 @@ function sleepSheet() {
   let min = Math.max(5, sleep.pick || 30);
   const MAX = 300;
   const fmtMin = (m) => (m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min');
-  const running = () => sleep.at && sleep.at > Date.now();
+  const running = () => sleep.left > 0;
   const draw = () => {
-    const left = running() ? Math.max(1, Math.ceil((sleep.at - Date.now()) / 60000)) : 0;
-    openDlg('<h2>Sleep timer</h2><p>' + (left ? 'Music pauses in ' + fmtMin(left) + '.' : 'Music pauses when the timer runs out.') + '</p>' +
+    const left = running() ? Math.max(1, Math.ceil(sleep.left / 60000)) : 0;
+    openDlg('<h2>Sleep timer</h2><p>' + (left ? 'Music pauses after ' + fmtMin(left) + ' more of listening.' : 'Counts down only while music is playing, then pauses it.') + '</p>' +
       '<div class="sleep-pick"><button class="sp-arrow" data-a="down" aria-label="5 minutes less"' + (min <= 5 ? ' disabled' : '') + '>' + I.back + '</button>' +
       '<div class="sp-box cloudy" aria-live="polite"><span class="sp-num">' + min + '</span><span class="sp-unit">minutes</span></div>' +
       '<button class="sp-arrow flip" data-a="up" aria-label="5 minutes more"' + (min >= MAX ? ' disabled' : '') + '>' + I.back + '</button></div>' +
@@ -1106,11 +1108,11 @@ function sleepSheet() {
     if (a === 'down') { min = Math.max(5, min - 5); draw(); return; }
     if (a === 'up') { min = Math.min(MAX, min + 5); draw(); return; }
     if (a === 'no') { closeDlg(); return; }
-    if (a === 'stop') { sleep.at = 0; closeDlg(); drawSettings(); toast('Sleep timer stopped'); return; }
-    if (a === 'start') { sleep.pick = min; sleep.at = Date.now() + min * 60000; closeDlg(); drawSettings(); toast('Pausing in ' + fmtMin(min)); }
+    if (a === 'stop') { sleep.left = 0; closeDlg(); drawSettings(); toast('Sleep timer stopped'); return; }
+    if (a === 'start') { sleep.pick = min; sleep.left = min * 60000; closeDlg(); drawSettings(); toast('Pausing after ' + fmtMin(min) + ' of listening'); }
   };
 }
-setInterval(() => { if (sleep.at && V.tab === 'settings' && !V.stats) { const el = document.querySelector('[data-act="sleep"] .val'); if (el) el.textContent = sleepLabel(); } }, 15000);
+setInterval(() => { if (sleep.left > 0 && V.tab === 'settings' && !V.stats) { const el = document.querySelector('[data-act="sleep"] .val'); if (el) el.textContent = sleepLabel(); } }, 15000);
 
 // ---------- sync with desktop Groove ----------
 // Desktop Groove runs a small private sync server (shared to your devices by Tailscale). Each sync sends
