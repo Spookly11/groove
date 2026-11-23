@@ -1,4 +1,6 @@
 'use strict';
+// Version: raise the middle number with every change to the app.
+const APP_VERSION = '1.23.0';
 // Groove for iPhone: a home screen web app. Songs, covers and settings live on the phone (IndexedDB).
 // Library format matches desktop Groove's Export Library zip, so libraries move both ways.
 
@@ -833,7 +835,8 @@ function drawSettings() {
     '<div class="section-label">Listening</div><div class="card cloudy">' +
       '<button class="row" data-act="stats"><span class="ic">' + I.stats + '</span><span class="lbl">Statistics</span><span class="val">' + fmtHours(L.totalListenTime) + '</span><span class="chev">' + I.chev + '</span></button>' +
       '<button class="row" data-act="sleep"><span class="ic">' + I.moon + '</span><span class="lbl">Sleep timer</span><span class="val">' + sleepLabel() + '</span><span class="chev">' + I.chev + '</span></button>' +
-    '</div>';
+    '</div>' +
+    '<div class="version">Groove ' + APP_VERSION + '<br>Updated ' + esc(new Date(L.versionSince || Date.now()).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })) + '</div>';
 }
 function drawStats() {
   const p = $('p-settings');
@@ -1383,6 +1386,7 @@ async function startImport() {
       fresh.themes.push(th);
     }
     fresh.activeThemeId = lib.activeThemeId || DEFAULT_THEME.id;
+    fresh.appVersion = L.appVersion; fresh.versionSince = L.versionSince;
     fresh.daily = lib.daily || {}; fresh.deletedSongs = lib.deletedSongs || {}; fresh.deletedPlaylists = lib.deletedPlaylists || {}; fresh.statsResetAt = lib.statsResetAt || 0;
     // keep the sync setup, and start counting from what was just imported (it matches your PC)
     fresh.sync = Object.assign({}, L.sync, { serverNow: Date.now(), base: { songs: Object.fromEntries(fresh.songs.map((s) => [s.id, [s.playCount, s.skipCount]])), listen: fresh.totalListenTime, daily: Object.assign({}, fresh.daily) } });
@@ -1456,6 +1460,7 @@ function refreshAll() {
   try { await DB.open(); } catch (e) { document.body.insertAdjacentHTML('beforeend', '<div class="empty" style="position:fixed;inset:0;z-index:50;padding-top:40vh">Groove could not open its storage on this device.</div>'); return; }
   const saved = await DB.get('meta', 'library');
   if (saved) L = Object.assign(emptyLibrary(), saved, { settings: Object.assign(emptyLibrary().settings, saved.settings || {}) });
+  if (L.appVersion !== APP_VERSION) { L.appVersion = APP_VERSION; L.versionSince = Date.now(); save(true); }
   const covers = await DB.all('covers');
   for (const [k, b] of covers) if (k.startsWith('ct:') || k.startsWith('p:') || k.startsWith('t:') || k.startsWith('c:')) setCover(k, b);
   applyTheme();
