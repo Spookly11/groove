@@ -1,6 +1,6 @@
 'use strict';
 // Version: raise the middle number with every change to the app.
-const APP_VERSION = '1.23.0';
+const APP_VERSION = '1.24.0';
 // Groove for iPhone: a home screen web app. Songs, covers and settings live on the phone (IndexedDB).
 // Library format matches desktop Groove's Export Library zip, so libraries move both ways.
 
