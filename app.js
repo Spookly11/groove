@@ -318,10 +318,12 @@ async function srcFor(el, id) {
 function unlockSpare() {
   if (unlocked) return;
   const sp = other();
-  sp.muted = true;
+  sp.muted = true; unlocking = sp;
   const p = sp.play();
-  if (p) p.then(() => { sp.pause(); sp.muted = false; unlocked = true; preloadNext(); }).catch(() => { sp.muted = false; });
+  if (p) p.then(() => { sp.pause(); sp.muted = false; unlocked = true; unlocking = null; preloadNext(); }).catch(() => { sp.muted = false; unlocking = null; });
+  else unlocking = null;
 }
+let unlocking = null;
 function pickUpcoming() {
   if (!P.cur || !P.queue.length) return null;
   if (P.shuffle) {
@@ -487,6 +489,11 @@ for (const el of players) {
     }
     tickListen();
   }));
+  // Only the active player may ever make sound. iOS can start the spare (preloaded) player by itself,
+  // e.g. when resuming after Bluetooth headphones disconnect, which played two songs at once.
+  const guard = (e) => { const x = e.target; if (x !== audio && x !== unlocking) { x.pause(); try { x.currentTime = 0; } catch (err) {} } };
+  el.addEventListener('play', guard);
+  el.addEventListener('playing', guard);
   el.addEventListener('play', act(() => { lastTick = Date.now(); updateNow(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; }));
   el.addEventListener('pause', act(() => { tickListen(); updateNow(); saveState(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; }));
   el.addEventListener('loadedmetadata', act(() => { updateTime(); if (pendingSeek != null) { try { audio.currentTime = pendingSeek; } catch (e) {} pendingSeek = null; } }));
@@ -502,7 +509,11 @@ function saveState(now) {
   L.state = { songId: P.cur, pos: audio.currentTime || 0, queue: P.queue, ctx: P.ctx, shuffle: P.shuffle, loop: P.loop };
   save(now);
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden) saveState(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { saveState(true); return; }
+  const sp = other(); if (!sp.paused && sp !== unlocking) { sp.pause(); try { sp.currentTime = 0; } catch (e) {} }
+  updateNow();
+});
 window.addEventListener('pagehide', () => saveState(true));
 
 // ---------- UI state ----------
